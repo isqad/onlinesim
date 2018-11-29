@@ -26,19 +26,24 @@ type BalanceResponse struct {
 	Zbalance int32
 }
 
-func GetBalance(balance *float64) error {
+func apiUrl(action string) string {
 	apiKey := os.Getenv("ONLINESIM_API_KEY")
-	action := `getBalance`
+	return fmt.Sprintf(`%s/%s.php?apikey=%s`, OnlinesimApiEndpoint, action, apiKey)
+}
 
-	url := fmt.Sprintf(`%s/%s.php?apikey=%s`, OnlinesimApiEndpoint, action, apiKey)
+func client() *http.Client {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
 
+	return &http.Client{Transport: tr}
+}
+
+func GetBalance(balance *float64) error {
 	return retry(MaxRetries, time.Second, func() error {
 		var onlineSimResponse BalanceResponse
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-		client := &http.Client{Transport: tr}
-		resp, err := client.Get(url)
+
+		resp, err := client().Get(apiUrl(`getBalance`))
 
 		if err != nil {
 			log.Fatal(err)
@@ -75,7 +80,98 @@ func GetBalance(balance *float64) error {
 	})
 }
 
-func GetNumber(number *string) error {
+type GetNumberResponse struct {
+	Response int32
+	Tzid     int32
+}
+
+func GetNumber(service string, id *int32) error {
+	return retry(MaxRetries, time.Second, func() error {
+		var getNumResponse GetNumberResponse
+
+		url := fmt.Sprintf(`%s&service=%s&country=86`, apiUrl(`getNum`), service)
+		log.Print(url)
+		resp, err := client().Get(url)
+
+		if err != nil {
+			log.Fatal(err)
+			return err
+		}
+
+		defer resp.Body.Close()
+
+		body, _ := ioutil.ReadAll(resp.Body)
+
+		log.Print(string(body[:]))
+
+		if err = json.Unmarshal(body, &getNumResponse); err != nil {
+			log.Fatal(err)
+			return nil
+		}
+
+		if getNumResponse.Response != 1 {
+			log.Fatal(getNumResponse)
+			return nil
+		}
+
+		log.Print(getNumResponse)
+
+		*id = getNumResponse.Tzid
+
+		return nil
+	})
+}
+
+type StateResponse struct {
+	Response      string
+	Tzid          string
+	Service       string
+	Number        string
+	Msg           string
+	Time          string
+	Form          string
+	ForwardStatus string
+	ForwardNumber string
+	Country       string
+}
+
+func GetState(id int32, messageToCode int32, state *StateResponse) error {
+	return retry(MaxRetries, time.Second, func() error {
+		var stateResponse StateResponse
+		url := fmt.Sprintf(`%s&tzid=%d&message_to_code=%d`,
+			apiUrl(`getState`), id, messageToCode)
+
+		log.Print(url)
+
+		resp, err := client().Get(url)
+
+		if err != nil {
+			log.Fatal(err)
+			return err
+		}
+
+		defer resp.Body.Close()
+
+		body, _ := ioutil.ReadAll(resp.Body)
+
+		log.Print(string(body[:]))
+
+		if err = json.Unmarshal(body, &stateResponse); err != nil {
+			log.Fatal(err)
+			return nil
+		}
+
+		if stateResponse.Response != `1` {
+			log.Fatal(stateResponse)
+			return nil
+		}
+
+		log.Print(stateResponse)
+
+		*state = stateResponse
+
+		return nil
+	})
 
 }
 
