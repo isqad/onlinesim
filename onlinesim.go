@@ -99,7 +99,7 @@ type StateResponse struct {
 type BalanceResponse struct {
 	Response JsonResponse
 	Balance  string
-	Zbalance int32
+	Zbalance string
 }
 
 func init() {
