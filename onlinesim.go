@@ -21,17 +21,20 @@ type JsonResponse int
 
 // Разновидности ответов
 const (
-	ResponseSuccess       JsonResponse = iota
-	ResponseFail                       // Ошибка
-	ResponseSmsWait                    // Ожидается ответ
-	ResponseNoNums                     // Нет подходящих номеров
-	ResponseTzInpool                   // Операция ожидает выделения номера
-	ResponseTzOverEmpty                // Ответ не поступил за отведенное время
-	ResponseTzNumAnswer                // Поступил ответ
-	ResponseTzOverOk                   // Операция завершена
-	ResponseErrorNoTzid                // Не указан tzid
-	ResponseErrorNoOps                 // Нет операций
-	ResponseAccountIdFail              // Необходимо пройти идентификацию для заказа номера
+	ResponseSuccess        JsonResponse = iota
+	ResponseFail                        // Ошибка
+	ResponseSmsWait                     // Ожидается ответ
+	ResponseNoNums                      // Нет подходящих номеров
+	ResponseTzInpool                    // Операция ожидает выделения номера
+	ResponseTzOverEmpty                 // Ответ не поступил за отведенное время
+	ResponseTzNumAnswer                 // Поступил ответ
+	ResponseTzOverOk                    // Операция завершена
+	ResponseErrorNoTzid                 // Не указан tzid
+	ResponseErrorNoOps                  // Нет операций
+	ResponseAccountIdFail               // Необходимо пройти идентификацию для заказа номера
+	ResponseWrongTzid                   // Неверный номер операции
+	ResponseNoCompleteTzid              //Невозможно завершить операцию
+	ResponseTryAgainLater               // Попробуйте позже
 )
 
 func (a *JsonResponse) UnmarshalJSON(b []byte) error {
@@ -66,6 +69,12 @@ func (a *JsonResponse) UnmarshalJSON(b []byte) error {
 		*a = ResponseErrorNoOps
 	case "ACCOUNT_IDENTIFICATION_REQUIRED":
 		*a = ResponseAccountIdFail
+	case "ERROR_WRONG_TZID":
+		*a = ResponseWrongTzid
+	case "NO_COMPLETE_TZID":
+		*a = ResponseNoCompleteTzid
+	case "TRY_AGAIN_LATER":
+		*a = ResponseTryAgainLater
 	default:
 		*a = ResponseFail
 	}
@@ -100,6 +109,11 @@ type BalanceResponse struct {
 	Response JsonResponse
 	Balance  string
 	Zbalance string
+}
+
+type SetOperationOkResponse struct {
+	Response JsonResponse
+	Tzid     int32
 }
 
 func init() {
@@ -169,6 +183,54 @@ func GetNumber(service string) ([]string, int32, error) {
 	}
 
 	return numbers, idOp, nil
+}
+
+func SetOperationOk(idOp int32, tries int) error {
+	return retry(tries, time.Second, func() error {
+		var onlineSimResponse BalanceResponse
+
+		url := fmt.Sprintf(`%s&tzid=%d`, apiUrl(`setOperationOk`), idOp)
+
+		resp, err := client().Get(url)
+
+		if err != nil {
+			log.Print(err)
+			return errors.New("Request failed")
+		}
+
+		defer resp.Body.Close()
+
+		body, _ := ioutil.ReadAll(resp.Body)
+
+		log.Print(string(body[:]))
+
+		if err = json.Unmarshal(body, &onlineSimResponse); err != nil {
+			log.Print(err)
+
+			return stop{error: err}
+		}
+
+		log.Print(onlineSimResponse)
+
+		if onlineSimResponse.Response == ResponseSuccess {
+			return nil
+		}
+
+		if onlineSimResponse.Response == ResponseWrongTzid {
+			return stop{error: errors.New("Wrong id operation")}
+		}
+
+		if onlineSimResponse.Response == ResponseNoCompleteTzid || onlineSimResponse.Response == ResponseTryAgainLater {
+			log.Println("No complete operation. Retry...")
+			return errors.New("No complete operation. Retry...")
+		}
+
+		if onlineSimResponse.Response == ResponseFail {
+			return stop{error: errors.New("Response Fail")}
+		}
+
+		return nil
+	})
 }
 
 func GetSms(idOp int32, smsText *[]string, tries int) error {
